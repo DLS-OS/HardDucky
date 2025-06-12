@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+import evdev
+import time
+import threading
+import os
+import configparser
+import subprocess
+from collections import deque
+import sys
+
+CONFIG_PATH = "/etc/hardducky/hardducky.conf"
+BLOCKLIST_PATH = "/etc/usb_blocklist.conf"
+
+def check_root():
+    if os.geteuid() != 0:
+        print("ERREUR : Ce script doit être exécuté en tant que root (sudo).")
+        sys.exit(1)
+
+def load_config():
+    config = configparser.ConfigParser()
+    config.read_dict({'default': {'max_keys_per_second': '2', 'log_file': '/var/log/hardducky.log'}, 'hardducky': {}})
+    if os.path.exists(CONFIG_PATH):
+        config.read(CONFIG_PATH)
+    sec = config['hardducky'] if 'hardducky' in config else config['default']
+    return int(sec.get('max_keys_per_second', config['default']['max_keys_per_second'])), sec.get('log_file', config['default']['log_file'])
+
+def log_violation(log_file, device, key, rate):
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    with open(log_file, 'a') as f:
+        f.write(f"[{time.ctime()}] Attaque HID sur {device.name}: Touche={key}, Taux={rate:.2f} t/s\n")
+    print(f"[LOG] Attaque HID enregistrée : {device.name} Touche={key} Taux={rate:.2f} t/s")
+
+def get_usb_id_from_device(dev):
+    try:
+        input_event = os.path.basename(dev.path)
+        input_path = f"/sys/class/input/{input_event}"
+        real_device = os.path.realpath(os.path.join(input_path, "device"))
+        usb_device = real_device
+        print(f"[DEBUG] Recherche de l'USB pour {dev.name} dans {real_device}")
+        while usb_device and "usb" not in os.path.basename(usb_device):
+            usb_device = os.path.dirname(usb_device)
+            if usb_device == "/":
+                print(f"[DEBUG] Aucun dossier USB trouvé pour {dev.name}")
+                return None
+        print(f"[DEBUG] ID USB détecté pour {dev.name}: {os.path.basename(usb_device)}")
+        return os.path.basename(usb_device)
+    except Exception as e:
+        print(f"Erreur lors de la récupération de l'ID USB : {e}")
+        return None
+
+def blacklist_usb_id(usb_id):
+    os.makedirs(os.path.dirname(BLOCKLIST_PATH), exist_ok=True)
+    with open(BLOCKLIST_PATH, 'a+') as f:
+        f.seek(0)
+        contenu = f.read()
+        if usb_id not in contenu:
+            f.write(usb_id + '\n')
+            print(f"[DEBUG] ID USB {usb_id} ajouté à la blacklist")
+        else:
+            print(f"[DEBUG] ID USB {usb_id} déjà présent dans la blacklist")
+
+def is_blacklisted(usb_id):
+    if not os.path.exists(BLOCKLIST_PATH):
+        return False
+    with open(BLOCKLIST_PATH, 'r') as f:
+        contenu = f.read()
+        return usb_id in contenu
+
+def create_udev_rule(usb_id):
+    base_path = f"/sys/bus/usb/devices/{usb_id}"
+    try:
+        with open(f"{base_path}/idVendor", 'r') as f:
+            vendor = f.read().strip()
+        with open(f"{base_path}/idProduct", 'r') as f:
+            product = f.read().strip()
+    except Exception as e:
+        print(f"Impossible de lire idVendor/idProduct pour {usb_id} : {e}")
+        return
+
+    rule = (f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{vendor}", ATTR{{idProduct}}=="{product}", '
+            f'ACTION=="add", RUN+="/bin/sh -c \'echo -n {usb_id} > /sys/bus/usb/drivers/usb/unbind\'"')
+
+    udev_rule_path = "/etc/udev/rules.d/99-usb-block.rules"
+
+    if os.path.exists(udev_rule_path):
+        with open(udev_rule_path, 'r') as f:
+            if rule in f.read():
+                print(f"Règle udev pour {usb_id} existe déjà")
+                return
+
+    with open(udev_rule_path, 'a') as f:
+        f.write(rule + "\n")
+
+    print(f"Règle udev créée pour bloquer {usb_id}")
+    subprocess.run(['udevadm', 'control', '--reload-rules'])
+    subprocess.run(['udevadm', 'trigger'])
+
+def block_device(device):
+    try:
+        usb_id = get_usb_id_from_device(device)
+        if not usb_id:
+            print(f"Impossible de déterminer le chemin USB de {device.name}")
+            return
+        if is_blacklisted(usb_id):
+            print(f"Périphérique {usb_id} déjà bloqué.")
+            return
+
+        unbind_path = "/sys/bus/usb/drivers/usb/unbind"
+        if os.path.exists(unbind_path):
+            print(f"[DEBUG] Tentative de blocage du périphérique {device.name} avec l'ID {usb_id}")
+            with open(unbind_path, 'w') as f:
+                f.write(usb_id)
+            blacklist_usb_id(usb_id)
+            create_udev_rule(usb_id)
+            print(f"[✔] Périphérique {device.name} ({usb_id}) bloqué et ajouté à la blacklist.")
+        else:
+            print("Chemin de unbind du driver USB introuvable.")
+    except Exception as e:
+        print(f"Erreur lors du blocage du périphérique {device.name} : {e}")
+
+def monitor_device(path, max_rate, log_file):
+    try:
+        dev = evdev.InputDevice(path)
+        print(f"[INFO] Surveillance du périphérique : {dev.name} sur {path}")
+        usb_id = get_usb_id_from_device(dev)
+        if usb_id and is_blacklisted(usb_id):
+            print(f"[!] Périphérique en blacklist ignoré : {usb_id}")
+            return
+        try:
+            dev.grab()
+            print(f"[INFO] Périphérique {dev.name} a été 'grabbed' correctement.")
+        except Exception as e:
+            print(f"[WARN] Impossible de 'graber' le périphérique {dev.name} : {e}")
+        history = deque()
+        for event in dev.read_loop():
+            if event.type == evdev.ecodes.EV_KEY and event.value == 1:
+                now = time.time()
+                history.append(now)
+                while history and now - history[0] > 1:
+                    history.popleft()
+                if len(history) > max_rate:
+                    key_name = evdev.ecodes.KEY.get(event.code, f"INCONNU_{event.code}")
+                    log_violation(log_file, dev, key_name, len(history))
+                    block_device(dev)
+                    return
+    except Exception as e:
+        print(f"[ERROR] Échec de la surveillance du périphérique : {e}")
+
+def scan_loop(max_rate, log_file):
+    monitored = set()
+    while True:
+        devices = evdev.list_devices()
+        if not devices:
+            print("[INFO] Aucun périphérique evdev détecté.")
+        for path in devices:
+            if path not in monitored:
+                try:
+                    dev = evdev.InputDevice(path)
+                    caps = dev.capabilities()
+                    print(f"[INFO] Périphérique trouvé : {dev.name} avec capacités : {caps}")
+                    t = threading.Thread(target=monitor_device, args=(path, max_rate, log_file), daemon=True)
+                    t.start()
+                    monitored.add(path)
+                except Exception as e:
+                    print(f"[ERROR] Erreur lors du démarrage du surveillant pour {path} : {e}")
+        time.sleep(5)
+
+def main():
+    check_root()
+    max_rate, log_file = load_config()
+    print(f"[INFO] Configuration : max_keys_per_second={max_rate}, log_file={log_file}")
+    scan_loop(max_rate, log_file)
+
+if __name__ == "__main__":
+    main()
