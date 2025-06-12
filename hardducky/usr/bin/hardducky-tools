@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+import os
+import sys
+import subprocess
+import re
+
+BLOCKLIST_PATH = "/etc/usb_blocklist.conf"
+UDEV_RULES_PATH = "/etc/udev/rules.d/99-usb-block.rules"
+
+def parse_blocklist():
+    if not os.path.exists(BLOCKLIST_PATH):
+        return []
+    with open(BLOCKLIST_PATH, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+def load_udev_rules():
+    if not os.path.exists(UDEV_RULES_PATH):
+        return []
+    with open(UDEV_RULES2_PATH, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+def parse_udev_rule_line(line):
+    # Extrait usb_id, idVendor et idProduct d'une ligne udev
+    vendor = None
+    product = None
+    usb_id = None
+    m = re.search(r'ATTR\{idVendor\}=="([0-9a-fA-F]+)"', line)
+    if m:
+        vendor = m.group(1)
+    m = re.search(r'ATTR\{idProduct\}=="([0-9a-fA-F]+)"', line)
+    if m:
+        product = m.group(1)
+    m = re.search(r'echo -n (\S+) > /sys/bus/usb/drivers/usb/unbind', line)
+    if m:
+        usb_id = m.group(1)
+    return usb_id, vendor, product
+
+def list_blocked_devices():
+    blocklist = parse_blocklist()
+    if not blocklist:
+        print("Aucun périphérique bloqué.")
+        return
+    rules = load_udev_rules()
+    print("Périphériques bloqués :")
+    for usb_id in blocklist:
+        matched_rules = [r for r in rules if f"echo -n {usb_id} >" in r]
+        if matched_rules:
+            usb, vendor, product = parse_udev_rule_line(matched_rules[0])
+            print(f" {usb_id}: VendorID={vendor} ProductID={product}")
+        else:
+            print(f" {usb_id}: Aucune info dans les règles udev")
+
+def list_usb_devices():
+    # Utilise lsusb pour lister les périphériques USB
+    try:
+        output = subprocess.check_output(['lsusb'], text=True)
+        print("Périphériques USB connectés (similaire à lsusb) :")
+        print(output.strip())
+    except Exception as e:
+        print(f"Erreur lors de l'exécution de lsusb : {e}")
+
+def ban_device(vendor, product):
+    # Cherche le usb_id avec lsusb et bloque le périphérique
+    vendor = vendor.lower()
+    product = product.lower()
+
+    # Chercher usb_id correspondant au Vendor/Product
+    usb_id = None
+    try:
+        usb_devices_path = "/sys/bus/usb/devices"
+        for dev in os.listdir(usb_devices_path):
+            base = os.path.join(usb_devices_path, dev)
+            idVendor_path = os.path.join(base, "idVendor")
+            idProduct_path = os.path.join(base, "idProduct")
+            if os.path.isfile(idVendor_path) and os.path.isfile(idProduct_path):
+                with open(idVendor_path, 'r') as f:
+                    v = f.read().strip().lower()
+                with open(idProduct_path, 'r') as f:
+                    p = f.read().strip().lower()
+                if v == vendor and p == product:
+                    usb_id = dev
+                    break
+        if not usb_id:
+            print(f"Aucun périphérique USB trouvé avec Vendor={vendor} Product={product}")
+            return
+    except Exception as e:
+        print(f"Erreur lors de la recherche du périphérique USB : {e}")
+        return
+
+    # Ajouter à la blocklist si pas déjà présent
+    blocklist = parse_blocklist()
+    if usb_id in blocklist:
+        print(f"Le périphérique {usb_id} est déjà bloqué.")
+        return
+
+    # Ajouter à la blacklist
+    try:
+        with open(BLOCKLIST_PATH, 'a') as f:
+            f.write(usb_id + '\n')
+        print(f"Périphérique {usb_id} ajouté à la blacklist.")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture de la blacklist : {e}")
+        return
+
+    # Ajouter une règle udev
+    try:
+        rule = (f'SUBSYSTEM=="usb", ATTR{{idVendor}}=="{vendor}", ATTR{{idProduct}}=="{product}", '
+                f'ACTION=="add", RUN+="/bin/sh -c \'echo -n {usb_id} > /sys/bus/usb/drivers/usb/unbind\'"')
+        existing_rules = load_udev_rules()
+        if rule in existing_rules:
+            print(f"Règle udev pour {usb_id} existe déjà.")
+        else:
+            with open(UDEV_RULES_PATH, 'a') as f:
+                f.write(rule + '\n')
+            print(f"Règle udev créée pour bloquer {usb_id}.")
+    except Exception as e:
+        print(f"Erreur lors de la création de la règle udev : {e}")
+        return
+
+    # Recharger les règles udev
+    try:
+        subprocess.run(['udevadm', 'control', '--reload-rules'], check=True)
+        subprocess.run(['udevadm', 'trigger'], check=True)
+        print("Règles udev rechargées.")
+    except Exception as e:
+        print(f"Erreur lors du rechargement des règles udev : {e}")
+
+def unban_device(vendor, product):
+    vendor = vendor.lower()
+    product = product.lower()
+
+    # Chercher usb_id dans les règles udev
+    usb_id = None
+    rules = load_udev_rules()
+    for line in rules:
+        u_usb_id, u_vendor, u_product = parse_udev_rule_line(line)
+        if u_vendor == vendor and u_product == product:
+            usb_id = u_usb_id
+            break
+    if not usb_id:
+        print(f"Aucun périphérique bloqué trouvé avec Vendor={vendor} Product={product}")
+        return
+
+    # Retirer de la blacklist
+    blocklist = parse_blocklist()
+    if usb_id not in blocklist:
+        print(f"Le périphérique {usb_id} n'est pas dans la blacklist.")
+    else:
+        blocklist.remove(usb_id)
+        try:
+            with open(BLOCKLIST_PATH, 'w') as f:
+                for b in blocklist:
+                    f.write(b + '\n')
+            print(f"Périphérique {usb_id} retiré de la blacklist.")
+        except Exception as e:
+            print(f"Erreur lors de la mise à jour de la blacklist : {e}")
+            return
+
+    # Retirer la règle udev
+    new_rules = [line for line in rules if usb_id not in line]
+    try:
+        with open(UDEV_RULES_PATH, 'w') as f:
+            for line in new_rules:
+                f.write(line + '\n')
+        print(f"Règle udev pour {usb_id} supprimée.")
+    except Exception as e:
+        print(f"Erreur lors de la mise à jour des règles udev : {e}")
+        return
+
+    # Recharger les règles udev
+    try:
+        subprocess.run(['udevadm', 'control', '--reload-rules'], check=True)
+        subprocess.run(['udevadm', 'trigger'], check=True)
+        print("Règles udev rechargées.")
+    except Exception as e:
+        print(f"Erreur lors du rechargement des règles udev : {e}")
+
+def usage():
+    print(f"""Utilisation : {sys0.argv[0]} <commande> [vendor_id] [product_id]
+
+Commandes :
+  list-usb               - Lister les périphériques USB connectés (similaire à lsusb)
+  list-blocked           - Lister les périphériques bloqués
+  ban <vendor> <product> - Bloquer un périphérique par Vendor ID et Product ID (hex)
+  unban <vendor> <product> - Débloquer un périphérique par Vendor ID et Product ID (hex)
+
+Exemple :
+  {sys.argv[0]} ban 046d c534
+  {sys.argv[0]} unban 046d c534
+""")
+
+def main():
+    if len(sys.argv) < 2:
+        usage()
+        return
+    cmd = sys.argv[1].lower()
+
+    if cmd == 'list-usb':
+        list_usb_devices()
+    elif cmd == 'list-blocked':
+        list_blocked_devices()
+    elif cmd == 'ban':
+        if len(sys.argv) != 4:
+            usage()
+            return
+        ban_device(sys.argv[2], sys.argv[3])
+    elif cmd == 'unban':
+        if len(sys.argv) != 4:
+            usage()
+            return
+        unban_device(sys.argv[2], sys.argv[3])
+    else:
+        usage()
+
+if __name__ == "__main__":
+    main()
