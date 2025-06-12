@@ -19,27 +19,26 @@ jobs:
 
       - name: Prepare the debian directory
         run: |
-          mkdir -p hardducky/DEBIAN
-          cp DEBIAN/control hardducky/DEBIAN/
-          cp DEBIAN/postinst hardducky/DEBIAN/
-          chmod +x hardducky/DEBIAN/postinst
+          mkdir -p package/hardducky/DEBIAN
+          cp hardducky/DEBIAN/control package/hardducky/DEBIAN/
+          cp hardducky/DEBIAN/postinst package/hardducky/DEBIAN/
+          chmod +x package/hardducky/DEBIAN/postinst
 
       - name: Copy application files
         run: |
-          mkdir -p hardducky/etc/hardducky/
-          cp etc/hardducky/hardducky.conf hardducky/etc/hardducky/
-          mkdir -p hardducky/lib/systemd/system/
-          cp lib/systemd/system/hardducky.service hardducky/lib/systemd/system/
-          mkdir -p hardducky/usr/bin/
-          cp usr/bin/hardducky hardducky/usr/bin/
-          cp usr/bin/hardducky-tools hardducky/usr/bin/
-          chmod +x hardducky/usr/bin/hardducky
-          chmod +x hardducky/usr/bin/hardducky-tools
+          mkdir -p package/hardducky/etc/hardducky/
+          cp hardducky/etc/hardducky/hardducky.conf package/hardducky/etc/hardducky/
+          mkdir -p package/hardducky/lib/systemd/system/
+          cp hardducky/lib/systemd/system/hardducky.service package/hardducky/lib/systemd/system/
+          mkdir -p package/hardducky/usr/bin/
+          cp hardducky/usr/bin/hardducky package/hardducky/usr/bin/
+          cp hardducky/usr/bin/hardducky-tools package/hardducky/usr/bin/
+          chmod +x package/hardducky/usr/bin/hardducky
+          chmod +x package/hardducky/usr/bin/hardducky-tools
 
       - name: Build the .deb package
         run: |
-          mkdir -p package
-          dpkg-deb --build hardducky package/hardducky.deb
+          dpkg-deb --build package/hardducky package/hardducky.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
