@@ -1,56 +1,51 @@
-name: Compile and Package hardducky
+name: Build and Release Debian Package
 
 on:
   push:
-    branches: [ main ]
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  HARDDUCKY_VERSION: 1.0.0  # À ajuster selon la version souhaitée
 
 jobs:
-  build_deb:
+  build-and-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Set up Debian package build environment
         run: |
-          sudo apt update
-          sudo apt install -y devscripts debhelper dh-python python3-all
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev devscripts debhelper dh-python python3-all
 
-      - name: Prepare the debian directory
+      - name: Build Debian package
         run: |
-          mkdir -p package/hardducky/DEBIAN
-          cp hardducky/DEBIAN/control package/hardducky/DEBIAN/
-          cp hardducky/DEBIAN/postinst package/hardducky/DEBIAN/
-          chmod +x package/hardducky/DEBIAN/postinst
+          mkdir -p build/hardducky
+          cp -R hardducky/DEBIAN build/hardducky/
+          cp -R hardducky/etc build/hardducky/
+          cp -R hardducky/lib build/hardducky/
+          cp -R hardducky/usr build/hardducky/
+          cd build
+          dpkg-deb --build hardducky
 
-      - name: Copy application files
+      - name: Rename package with version
         run: |
-          mkdir -p package/hardducky/etc/hardducky/
-          cp hardducky/etc/hardducky/hardducky.conf package/hardducky/etc/hardducky/
-          mkdir -p package/hardducky/lib/systemd/system/
-          cp hardducky/lib/systemd/system/hardducky.service package/hardducky/lib/systemd/system/
-          mkdir -p package/hardducky/usr/bin/
-          cp hardducky/usr/bin/hardducky package/hardducky/usr/bin/
-          cp hardducky/usr/bin/hardducky-tools package/hardducky/usr/bin/
-          chmod +x package/hardducky/usr/bin/hardducky
-          chmod +x package/hardducky/usr/bin/hardducky-tools
+          cd build
+          mv hardducky.deb hardducky-v${{ env.HARDDUCKY_VERSION }}.deb
 
-      - name: Build the .deb package
-        run: |
-          dpkg-deb --build package/hardducky package/hardducky.deb
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
         with:
-          name: hardducky-deb
-          path: package/hardducky.deb
-
-      - name: Create GitHub Release (on tag)
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: package/hardducky.deb
+          tag_name: v${{ env.HARDDUCKY_VERSION }}
+          name: Release v${{ env.HARDDUCKY_VERSION }}
+          files: build/hardducky-v${{ env.HARDDUCKY_VERSION }}.deb
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
