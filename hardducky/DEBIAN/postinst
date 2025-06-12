@@ -1,0 +1,24 @@
+#!/bin/sh
+
+set -e
+
+LOGFILE="/var/log/hardducky.log"
+
+# Creer l'archive si ca existe pas
+if [ ! -f "$LOGFILE" ]; then
+    touch "$LOGFILE"
+    chmod 664 "$LOGFILE"
+    chown root:adm "$LOGFILE"
+fi
+
+# Assurer que le dossier /var/log/ existe
+mkdir -p /var/log
+
+# Recharge de  systemd
+systemctl daemon-reexec || true
+systemctl daemon-reload || true
+
+# Activer(enable) service
+systemctl enable hardducky.service || true
+
+exit 0
