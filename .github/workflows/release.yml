@@ -42,7 +42,7 @@ jobs:
           dpkg-deb --build hardducky package/hardducky.deb
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: hardducky-deb
           path: package/hardducky.deb
