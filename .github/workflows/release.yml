@@ -1,0 +1,48 @@
+name: Compile and Package hardducky
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y devscripts debhelper dh-python python3-all
+
+      - name: Prepare the debian directory
+        run: |
+          mkdir -p hardducky/DEBIAN
+          cp DEBIAN/control hardducky/DEBIAN/
+          cp DEBIAN/postinst hardducky/DEBIAN/
+          chmod +x hardducky/DEBIAN/postinst
+
+      - name: Copy application files
+        run: |
+          mkdir -p hardducky/etc/hardducky/
+          cp etc/hardducky/hardducky.conf hardducky/etc/hardducky/
+          mkdir -p hardducky/lib/systemd/system/
+          cp lib/systemd/system/hardducky.service hardducky/lib/systemd/system/
+          mkdir -p hardducky/usr/bin/
+          cp usr/bin/hardducky hardducky/usr/bin/
+          cp usr/bin/hardducky-tools hardducky/usr/bin/
+          chmod +x hardducky/usr/bin/hardducky
+          chmod +x hardducky/usr/bin/hardducky-tools
+
+      - name: Build the .deb package
+        run: |
+          mkdir -p package
+          dpkg-deb --build hardducky package/hardducky.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: hardducky-deb
+          path: package/hardducky.deb
