@@ -45,3 +45,11 @@ jobs:
         with:
           name: hardducky-deb
           path: package/hardducky.deb
+
+      - name: Create GitHub Release (on tag)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: package/hardducky.deb
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
