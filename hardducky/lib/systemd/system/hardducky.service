@@ -1,0 +1,10 @@
+[Unit]
+Description=HardDucky HID Protection Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/hardducky
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
