@@ -1,0 +1,7 @@
+Package: hardducky
+Version: 1.0
+Section: security
+Priority: optional
+Architecture: all
+Maintainer: DLS_OS
+Description: Anti-BadUSB daemon for DLS_OS to detect HID attacks.
