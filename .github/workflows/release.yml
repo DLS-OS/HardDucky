@@ -3,6 +3,7 @@ name: Compile and Package hardducky
 on:
   push:
     branches: [ main ]
+    tags: [ 'v_1.0' ]
   pull_request:
     branches: [ main ]
 
