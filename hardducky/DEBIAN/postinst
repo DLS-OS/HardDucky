@@ -13,6 +13,8 @@ fi
 
 # Assurer que le dossier /var/log/ existe
 mkdir -p /var/log
+chmod +x /usr/bin/hardducky
+chmod +x /usr/bin/hardducky-tools
 
 # Recharge de  systemd
 systemctl daemon-reexec || true
