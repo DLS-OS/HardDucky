@@ -46,7 +46,7 @@ jobs:
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ env.HARDDUCKY_VERSION }}
+          tag_name: latest
           name: Release v${{ env.HARDDUCKY_VERSION }}
           files: build/hardducky-v${{ env.HARDDUCKY_VERSION }}.deb
           draft: false
